@@ -330,12 +330,49 @@ void kernel_main(void) {
     }
 }
 
+long getchar(void) {
+    struct sbiret ret = sbi_call(0, 0, 0, 0, 0, 0, 0, 2);
+    return ret.error;
+}
+
+void handle_syscall(struct trap_frame *f) {
+    switch (f->a3) {
+        case SYS_EXIT:
+            printf("process %d exited\n", current_proc->pid);
+            current_proc->state = PROC_EXITED;
+            yield();
+            PANIC("unreachable");
+        case SYS_GETCHAR:
+            while (1) {
+                long ch = getchar();
+                if (ch >= 0) {
+                    f->a0 = ch;
+                    break;
+                }
+
+                yield();
+            }
+            break;
+        case SYS_PUTCHAR:
+            putchar(f->a0);
+            break;
+        default:
+            PANIC("unexpected syscall a3=%x\n", f->a3);
+    }
+}
+
 void handle_trap(struct trap_frame *f) {
     uint32_t scause = READ_CSR(scause);
     uint32_t stval  = READ_CSR(stval);
     uint32_t user_pc = READ_CSR(sepc);
+    if (scause == SCAUSE_ECALL) {
+        handle_syscall(f);
+        user_pc += 4;
+    } else {
+        PANIC("unexpected trap scause=%x, sepc=%x\n", scause, stval, user_pc);
+    }
 
-    PANIC("unexpected trap scause=%x, stval=%x, sepc=%x\n", scause, stval, user_pc);
+    WRITE_CSR(sepc, user_pc);
 }
 
 __attribute__((section(".text.boot")))
